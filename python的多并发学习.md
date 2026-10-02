@@ -1,0 +1,713 @@
+[toc]
+
+学习 python 的同学都知道，写完基础语法后一定会碰到一个绕不开的话题——"多任务"。什么是多任务？简单说，就是让程序同时干好几件事：一边下载文件一边播放音乐，一边处理多个用户请求等等。python 提供了两种实现多任务的方式：**进程（multiprocessing）** 和 **线程（threading）**。这篇文章就用口语化的方式，把这两个概念讲清楚，并结合实际代码说明并发编程里最容易踩的两个坑——**竞争条件**和**锁**。
+
+# 1. 什么是进程和线程
+
+## 1.1 进程
+
+进程是操作系统**资源分配**的基本单位。每运行一个程序，操作系统就为它创建一个进程，分配独立的内存空间。
+
+通俗地理解：进程就像一家公司，有独立的办公室（内存），不同公司之间互不干扰。
+
+## 1.2 线程
+
+线程是操作系统**调度执行**的基本单位，一个进程里可以包含多个线程，线程**共享**所在进程的内存。
+
+通俗地理解：线程就像公司里的员工，大家在同一间办公室（共享内存）里干活，资源共享，但也容易互相影响。
+
+## 1.3 进程和线程的区别
+
+- **进程**：内存独立、创建开销大、适合 CPU 密集型任务
+- **线程**：内存共享、创建开销小、适合 I/O 密集型任务
+
+## 1.4 GIL（全局解释器锁）
+
+python 里有个特殊的概念叫 GIL，它规定同一时刻**只有一个线程能执行 python 字节码**。所以：
+
+- **I/O 密集型**任务（网络请求、文件读写、sleep 等）用**线程**——因为 I/O 等待时会释放 GIL，让别的线程运行
+- **CPU 密集型**任务（大量计算）用**进程**——因为每个进程有独立的解释器和 GIL，才能真正并行
+
+> 一句话记住：**I/O 密集用线程，CPU 密集用进程。**
+
+# 2. 进程（multiprocessing）
+
+## 2.1 单任务：顺序执行
+
+先看最朴素的写法，两个任务一个接一个执行：
+
+```python
+import time
+
+def sing():
+    for i in range(5):
+        print("唱歌中...")
+        time.sleep(1)
+
+
+def dance():
+    for i in range(5):
+        print("跳舞中...")
+        time.sleep(1)
+
+
+if __name__ == "__main__":
+    sing()
+    dance()
+```
+
+```python
+唱歌中...
+唱歌中...
+唱歌中...
+唱歌中...
+唱歌中...
+跳舞中...
+跳舞中...
+跳舞中...
+跳舞中...
+跳舞中...
+```
+
+这样写，先完整唱完歌（5 秒），再完整跳舞（5 秒），总共 **10 秒**。两个任务完全没有重叠，这就是单进程串行执行。
+
+## 2.2 多进程任务
+
+想让唱歌和跳舞同时进行，就要用 `multiprocessing.Process` 开启多进程：
+
+```python
+import time
+import multiprocessing
+
+def sing():
+    for i in range(5):
+        print("唱歌中...")
+        time.sleep(1)
+
+
+def dance():
+    for i in range(5):
+        print("跳舞中...")
+        time.sleep(1)
+
+
+if __name__ == "__main__":
+    # 创建进程
+    sing_process = multiprocessing.Process(target=sing)
+    dance_process = multiprocessing.Process(target=dance)
+    # 启动进程
+    sing_process.start()
+    dance_process.start()
+```
+
+```python
+唱歌中...
+跳舞中...
+唱歌中...
+跳舞中...
+...
+```
+
+- `multiprocessing.Process(target=函数名)` 创建一个进程对象，`target` 指定要执行的函数（**只写函数名，不加括号**）
+- `.start()` 真正启动进程
+- 两个进程并行执行，总共约 **5 秒**（而不是 10 秒），因为唱歌和跳舞是同时进行的
+
+## 2.3 带参数的多进程
+
+很多时候，进程里的函数需要接收参数，用 `args` 或 `kwargs` 传参：
+
+```python
+import time
+import multiprocessing
+
+def sing(num, name):
+    for i in range(num):
+        print(f"{name}唱歌中...")
+        time.sleep(1)
+
+
+def dance(num, name):
+    for i in range(num):
+        print(f"{name}跳舞中...")
+        time.sleep(1)
+
+
+if __name__ == "__main__":
+    sing_process = multiprocessing.Process(target=sing, args=(5, "张三")) # args 元组，按位置传参
+    dance_process = multiprocessing.Process(target=dance, kwargs={'num': 5, 'name': '李四'}) # kwargs 字典，按参数名传参
+    sing_process.start()
+    dance_process.start()
+```
+
+```python
+张三唱歌中...
+李四跳舞中...
+张三唱歌中...
+李四跳舞中...
+...
+```
+
+- **`args`（元组）**：按位置顺序传参，`args=(5, "张三")` 对应 `sing(num, name)`，顺序必须一致
+- **`kwargs`（字典）**：按参数名传参，key 必须和函数形参名一致，但顺序可以任意
+
+## 2.4 获取进程编号
+
+每个进程都有唯一的编号 PID，用 `os.getpid()` 和 `os.getppid()` 获取：
+
+```python
+import time
+import multiprocessing
+import os
+
+def sing():
+    print(f"唱歌进程pid: {os.getpid()}")          # 唱歌进程pid: 62127
+    print(f"唱歌进程父进程pid: {os.getppid()}")    # 唱歌进程父进程pid: 62123
+    for i in range(5):
+        print("唱歌中...")
+        time.sleep(1)
+
+
+def dance():
+    print(f"跳舞进程pid: {os.getpid()}")           # 跳舞进程pid: 62128
+    print(f"跳舞进程父进程pid: {os.getppid()}")     # 跳舞进程父进程pid: 62123
+    for i in range(5):
+        print("跳舞中...")
+        time.sleep(1)
+
+
+if __name__ == "__main__":
+    print(f"主进程pid: {os.getpid()}")              # 主进程pid: 62123
+
+    sing_process = multiprocessing.Process(target=sing)
+    dance_process = multiprocessing.Process(target=dance)
+
+    sing_process.start()
+    dance_process.start()
+```
+
+- **`os.getpid()`**：返回当前进程自己的 PID
+- **`os.getppid()`**：返回当前进程的父进程 PID（ppid = parent pid）
+
+从输出可以看出，`sing` 和 `dance` 两个子进程的父进程 PID 都是主进程 PID（62123），说明它们都是主进程创建出来的子进程。PID 每次运行都不同，注释里的数字只是某次运行的结果。
+
+## 2.5 守护进程
+
+默认情况下，主进程结束时会等子进程跑完才退出。设置 `daemon=True` 后，主进程结束，子进程会被立即终止：
+
+```python
+import time
+import multiprocessing
+
+def work():
+    for i in range(10):
+        print("子进程开始工作...")
+        time.sleep(0.2)
+
+if __name__ == "__main__":
+    work_process = multiprocessing.Process(target=work)
+    # work_process.daemon = True  # 设置为守护进程，主进程结束，子进程也会结束
+    work_process.start()        # 子进程执行需要2秒
+
+    time.sleep(1)  # 主进程休眠1秒
+    print("主进程结束工作...")
+```
+
+- **不设置 daemon**：主进程打印"结束"后，仍会等子进程跑完 2 秒才真正退出
+- **设置 daemon=True**：主进程打印"结束"后，子进程立即被杀掉
+- 注意：`daemon` 必须在 `.start()` **之前**设置，否则报错
+
+## 2.6 案例：多进程复制文件
+
+综合前面的知识，做一个实用案例——用多进程批量复制文件：
+
+```python
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+
+import os
+import multiprocessing as mp
+
+
+def copy_file(file_name, sour_dir, dest_dir):
+    '''
+    复制文件的函数
+        :param file_name: 文件名
+        :param sour_dir: 源目录
+        :param dest_dir: 目标目录
+    '''
+    sour_file_path = os.path.join(sour_dir, file_name)
+    dest_file_path = os.path.join(dest_dir, file_name)
+
+    with open(sour_file_path, 'rb') as f_sour:
+        with open(dest_file_path, 'wb') as f_dest:
+            while True:
+                data = f_sour.read(1024)
+                if not data:          # 读到文件末尾，停止读取
+                    break
+                f_dest.write(data)
+
+
+if __name__ == "__main__":
+    sour_dir = "sour_directory"
+    dest_dir = "dest_directory"
+
+    # 创建目标目录
+    try:
+        os.mkdir(dest_dir)
+    except FileExistsError:
+        print(f"Directory '{dest_dir}' already exists.")
+        exit(1)
+
+    # 获取源目录下的所有文件
+    files = os.listdir(sour_dir)
+
+    # 为每个文件启动一个进程去复制
+    for file_name in files:
+        p = mp.Process(target=copy_file, args=(file_name, sour_dir, dest_dir))
+        p.start()
+```
+
+逐段说明：
+
+1. **`copy_file` 函数**：
+   - `os.path.join()` 拼接源文件与目标文件的完整路径
+   - `open(..., 'rb')` / `open(..., 'wb')` 以二进制模式读写，保证文本、图片、视频等任意文件都能正确复制
+   - `f_sour.read(1024)` 每次读 1024 字节（1KB），读到空数据（文件末尾）就退出，实现分块流式复制，避免大文件一次性塞进内存
+2. **`os.mkdir(dest_dir)`**：创建目标目录，已存在则退出，避免覆盖数据
+3. **核心循环**：遍历每个文件，为每个文件开一个独立进程并行复制，充分利用多核 CPU 提升速度
+
+> 补充：如果文件数量巨大，为每个文件开一个进程开销会很大，更好的做法是用进程池 `mp.Pool(4)` 固定几个进程复用。
+
+# 3. 线程（threading）
+
+## 3.1 多线程任务
+
+线程的用法和进程几乎一模一样，只是把 `Process` 换成 `Thread`：
+
+```python
+import time
+import threading
+
+def sing():
+    for i in range(3):
+        print("唱歌中...")
+        time.sleep(1)
+
+
+def dance():
+    for i in range(3):
+        print("跳舞中...")
+        time.sleep(1)
+
+
+if __name__ == "__main__":
+    # 创建线程
+    sing_thread = threading.Thread(target=sing)
+    dance_thread = threading.Thread(target=dance)
+    # 启动线程
+    sing_thread.start()
+    dance_thread.start()
+```
+
+```python
+唱歌中...
+跳舞中...
+唱歌中...
+跳舞中...
+唱歌中...
+跳舞中...
+```
+
+和进程的区别在于：进程是"两个进程各干各的"，线程是"同一个进程里两个线程在跑"，线程之间共享内存。
+
+## 3.2 带参数的线程
+
+线程传参方式和进程完全一致，同样支持 `args` 和 `kwargs`：
+
+```python
+import threading
+import time
+
+def task(num, name):
+    for i in range(num):
+        print(f"{name}执行中...")
+        time.sleep(1)
+
+if __name__ == "__main__":
+    t1 = threading.Thread(target=task, args=(3, "张三"))                          # 位置传参
+    t2 = threading.Thread(target=task, kwargs={'num': 3, 'name': '李四'})          # 关键字传参
+    t1.start()
+    t2.start()
+```
+
+```python
+张三执行中...
+李四执行中...
+张三执行中...
+李四执行中...
+张三执行中...
+李四执行中...
+```
+
+## 3.3 守护线程
+
+守护线程和守护进程语义一致：主线程结束，守护线程立即结束：
+
+```python
+import time
+import threading
+
+def work():
+    for i in range(10):
+        print("子线程开始工作...")
+        time.sleep(0.2)
+
+if __name__ == "__main__":
+    work_thread = threading.Thread(target=work, daemon=True)    # 方法一
+    # work_thread.daemon = True                                 # 方法二
+    work_thread.start()        # 子线程执行需要2秒
+
+    time.sleep(1)  # 主进程休眠1秒
+    print("主进程结束工作...")
+```
+
+```python
+子线程开始工作...
+子线程开始工作...
+子线程开始工作...
+子线程开始工作...
+子线程开始工作...
+主进程结束工作...
+```
+
+`work` 原本需要 2 秒，但设置 `daemon=True` 后，主线程睡了 1 秒就结束，子线程随即被终止（只打印了 5 次）。注意：只要还有**非守护线程**在运行，进程就会继续存活；守护线程则可以被主程序结束时自动丢弃。
+
+## 3.4 线程的执行顺序
+
+线程的执行顺序是**无序的**，由操作系统调度决定：
+
+```python
+import time
+import threading
+
+
+def task():
+    time.sleep(1)                           # 模拟任务执行时间，否则线程执行太快，无法体现无序性
+    thread = threading.current_thread()     # 获取当前线程对象
+    print(f"{thread.name} 开始执行任务")
+
+if __name__ == "__main__":
+    for i in range(5):
+        thread = threading.Thread(target=task)
+        thread.start()
+```
+
+```python
+Thread-1 (task) 开始执行任务
+Thread-2 (task) 开始执行任务
+Thread-5 (task) 开始执行任务
+Thread-3 (task) 开始执行任务
+Thread-4 (task) 开始执行任务
+```
+
+- `threading.current_thread()`：获取当前正在运行的线程对象
+- `thread.name`：线程名，未显式命名时 python 自动命名为 `Thread-1`、`Thread-2`……注意输出里 `Thread-5` 反而先于 `Thread-3`，正是无序的体现
+- 为什么先 `time.sleep(1)`？如果线程执行太快，可能在下一个线程启动前就跑完了，看起来像"有序"的。加 sleep 放大时间差，无序性才暴露出来
+
+# 4. 竞争条件（Race Condition）
+
+## 4.1 什么是竞争条件
+
+当多个线程**同时读写同一份共享数据**，最终结果取决于各线程的执行顺序时，就产生了竞争条件。由于执行顺序不确定，结果也就变得不可预测——这是并发编程里最常见的 bug。
+
+## 4.2 案例：计数器
+
+两个线程同时对计数器加一，看看会发生什么：
+
+```python
+import threading
+import time
+
+count = 0
+
+def add():
+    global count
+    for _ in range(200000):
+        tmp = count        # 1. 读
+        time.sleep(0)      # 主动让出 GIL，制造线程切换
+        count = tmp + 1    # 2. 写
+
+if __name__ == "__main__":
+    threads = []
+    for _ in range(8):
+        t = threading.Thread(target=add)
+        t.start()
+        threads.append(t)
+
+    for t in threads:
+        t.join()           # 等待所有线程结束
+
+    print(f"最终 count = {count} , 预期 count = {8 * 200000}")
+```
+
+```python
+最终 count = 200126 , 预期 count = 1600000
+```
+
+理论上 8 个线程各加 20 万次，结果应该是 1600000。但实际只有 200126，**大量更新被丢失**了。原因在于 `count += 1` 本质是三步：**读 → 加 → 写**，不是原子操作。两个线程可能同时读到同一个旧值，各自加 1 后都写回，就丢失了一次自增：
+
+```
+时间轴示意：
+线程A：读 count=100 → 算 101 → 写回 101
+线程B：    读 count=100（读到旧值！）→ 算 101 → 写回 101
+结果：两次自增只生效一次
+```
+
+## 4.3 案例：银行账户并发取款
+
+竞争条件的危害在涉及钱的时候尤其严重，看这个取款案例：
+
+```python
+import threading
+import time
+
+class Account:
+    def __init__(self, balance):
+        self.balance = balance
+
+    def withdraw(self, amount):
+        if self.balance >= amount:          # 检查余额是否足够
+            time.sleep(0.01)                # 模拟取款过程中的网络/数据库延迟
+            self.balance -= amount          # 扣款
+            print(f"取款 {amount} 成功，余额 {self.balance}")
+        else:
+            print(f"余额不足，取款 {amount} 失败，余额 {self.balance}")
+
+account = Account(1000)
+
+if __name__ == "__main__":
+    t1 = threading.Thread(target=account.withdraw, args=(800,))
+    t2 = threading.Thread(target=account.withdraw, args=(800,))
+    t1.start()
+    t2.start()
+    t1.join()
+    t2.join()
+    print(f"最终余额 = {account.balance}")
+```
+
+```python
+取款 800 成功，余额 200
+取款 800 成功，余额 -600
+最终余额 = -600
+```
+
+账户初始余额 1000，两个线程同时各取 800，正确结果应该是**只有一人成功**、余额 200。但实际却发生了**超额取款**，余额变成 -600。原因是两个线程都在 `time.sleep` 之前通过了 `if self.balance >= amount` 判断（都读到余额 1000），然后都执行了扣款。**判断和扣款之间的时间差**被并发利用，导致逻辑失效。
+
+
+
+# 5. 锁（Lock）
+
+## 5.1 什么是锁
+
+锁是解决竞争条件最基本的手段，核心思想是**互斥**：某段代码执行前先加锁，同一时刻只有一个线程能进入，其他线程必须等待锁释放。这段被保护起来的代码叫**临界区**。
+
+python 里 `threading.Lock` 就是一把互斥锁。
+
+## 5.2 用锁修复计数器
+
+```python
+import threading
+import time
+
+count = 0
+lock = threading.Lock()          # 创建一把互斥锁
+
+def add():
+    global count
+    for _ in range(200000):
+        lock.acquire()           # 加锁，进入临界区
+        try:
+            tmp = count
+            time.sleep(0)
+            count = tmp + 1      # 临界区：共享数据的修改
+        finally:
+            lock.release()       # 释放锁
+
+if __name__ == "__main__":
+    threads = []
+    for _ in range(8):
+        t = threading.Thread(target=add)
+        t.start()
+        threads.append(t)
+
+    for t in threads:
+        t.join()
+
+    print(f"最终 count = {count} , 预期 count = {8 * 200000}")
+```
+
+```python
+最终 count = 1600000 , 预期 count = 1600000
+```
+
+- `lock.acquire()`：请求加锁，若锁被别的线程持有则阻塞等待
+- `lock.release()`：释放锁，让等待中的线程继续
+- `try ... finally` 保证即使临界区抛异常，锁也一定会被释放
+
+加了锁后，"读-改-写"变成原子化操作，结果稳定正确。
+
+## 5.3 用锁修复银行取款
+
+用锁修复前面的取款案例：
+
+```python
+import threading
+import time
+
+class Account:
+    def __init__(self, balance):
+        self.balance = balance
+        self.lock = threading.Lock()     # 每个账户配一把锁
+
+    def withdraw(self, amount):
+        with self.lock:                  # 用锁保护「判断+扣款」整个临界区
+            if self.balance >= amount:
+                time.sleep(0.01)
+                self.balance -= amount
+                print(f"取款 {amount} 成功，余额 {self.balance}")
+            else:
+                print(f"余额不足，取款 {amount} 失败，余额 {self.balance}")
+
+account = Account(1000)
+
+if __name__ == "__main__":
+    t1 = threading.Thread(target=account.withdraw, args=(800,))
+    t2 = threading.Thread(target=account.withdraw, args=(800,))
+    t1.start()
+    t2.start()
+    t1.join()
+    t2.join()
+    print(f"最终余额 = {account.balance}")
+```
+
+```python
+取款 800 成功，余额 200
+余额不足，取款 800 失败，余额 200
+最终余额 = 200
+```
+
+关键点：**锁必须覆盖"判断 + 扣款"整个临界区**，而不是只包住扣款那一行。如果把锁只加在 `self.balance -= amount` 上，"判断"仍在锁外并发执行，问题依旧。正确做法是把 `if` 判断和扣款一起放进锁里，保证"检查余额 → 扣款"是原子操作。
+
+## 5.4 更优雅的写法：with 语句
+
+`Lock` 支持上下文管理器，用 `with` 自动加锁/释放，代码更简洁、更不易出错：
+
+```python
+import threading
+
+count = 0
+lock = threading.Lock()
+
+def add():
+    global count
+    for _ in range(200000):
+        with lock:               # 进入时自动 acquire，退出时（含异常）自动 release
+            count += 1
+
+if __name__ == '__main__':
+    threads = []
+    for _ in range(8):
+        t = threading.Thread(target=add)
+        t.start()
+        threads.append(t)
+
+    for t in threads:
+        t.join()
+
+    print(f"最终 count = {count} , 预期 count = {8 * 200000}")
+```
+
+`with lock:` 进入时自动 `acquire()`，退出时（包括异常）自动 `release()`，无需手动写 `try/finally`。日常推荐使用 `with` 写法。
+
+# 6. 死锁与可重入锁
+
+## 6.1 死锁
+
+两个线程互相等待对方持有的锁，就会导致所有线程都无法继续，程序卡死，这就是死锁：
+
+```python
+import threading
+
+lock_a = threading.Lock()
+lock_b = threading.Lock()
+
+def worker1():
+    with lock_a:
+        print("worker1 拿到 A，等待 B...")
+        with lock_b:
+            print("worker1 拿到 B")
+
+def worker2():
+    with lock_b:
+        print("worker2 拿到 B，等待 A...")
+        with lock_a:
+            print("worker2 拿到 A")
+
+if __name__ == "__main__":
+    t1 = threading.Thread(target=worker1)
+    t2 = threading.Thread(target=worker2)
+    t1.start()
+    t2.start()
+    t1.join()
+    t2.join()
+```
+
+`worker1` 先拿 A 再等 B，`worker2` 先拿 B 再等 A。若恰好交错：worker1 持 A 等 B，worker2 持 B 等 A，互相等待、谁也无法释放，程序卡死。
+
+避免死锁的常见原则：
+
+- 统一加锁顺序：所有线程都按相同顺序获取多把锁
+- 缩短临界区：锁的持有时间尽量短
+- 使用超时获取：`lock.acquire(timeout=...)` 避免无限等待
+
+## 6.2 可重入锁 RLock
+
+普通 `Lock` 在同一线程未释放时再次加锁会把自己锁死，`RLock`（可重入锁）则允许同一线程多次加锁：
+
+```python
+import threading
+
+lock = threading.RLock()    # 可重入锁
+
+def outer():
+    with lock:
+        print("进入外层")
+        inner()
+
+def inner():
+    with lock:               # 同一线程再次加锁，RLock 允许，普通 Lock 会死锁
+        print("进入内层")
+
+if __name__ == "__main__":
+    t = threading.Thread(target=outer)
+    t.start()
+    t.join()
+```
+
+```python
+进入外层
+进入内层
+```
+
+`RLock` 内部维护"持有者线程"和"加锁计数"，同一线程可重复加锁，释放同样次数后才真正释放。适合函数嵌套调用都要加锁的场景（如递归、函数互相调用）。
+
+# 7. 总结
+
+1. **多任务** = 让程序同时干多件事，python 提供进程（`multiprocessing`）和线程（`threading`）两种方式
+2. **进程和线程的区别**：进程内存独立、开销大、适合 CPU 密集；线程共享内存、开销小、适合 I/O 密集
+3. **GIL** 决定了 python 多线程在 CPU 密集场景拿不到真正的并行加速，此时应选多进程
+4. **竞争条件**是并发最大的坑：多任务同时读写共享数据导致结果不确定
+5. **锁**是解决竞争条件的钥匙：用互斥锁保护临界区，保证"读-改-写"原子化
+6. **用锁也要防死锁**：统一加锁顺序、缩短临界区、必要时用 `RLock`
+
+# END
