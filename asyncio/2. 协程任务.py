@@ -17,10 +17,12 @@ async def task2():
 
 async def main():
     print("main start")
-    # 1. 创建协程任务
+    # 3. 获取当前运行的事件循环对象
+    asyncio.get_running_loop()
+    # 4. 创建协程任务
     t1 = asyncio.create_task(task1())
     t2 = asyncio.create_task(task2())
-    # 2. 使用 await 关键字挂起协程任务，等待协程任务执行完成，并获取返回值
+    # 5. 使用 await 关键字挂起协程任务，等待协程任务执行完成，并获取返回值
     result1 = await t1
     result2 = await t2
     print('结果:', result1 + result2)
@@ -28,7 +30,10 @@ async def main():
 
 if __name__ == '__main__':
     start = time.time()
-    # 3. 启动事件循环并运行协程任务（asyncio.run 会自动创建并管理事件循环）
-    asyncio.run(main())
+    # 1. 创建事件循环对象（注意：get_event_loop() 已过期，会触发 DeprecationWarning，此处仅为讲解事件循环创建步骤而保留，实际开发请用 asyncio.run()）
+    loop = asyncio.get_event_loop()
+    # 2. 启动事件循环，运行协程任务
+    loop.run_until_complete(main())
+
     end = time.time()
     print('总耗时:', end - start)
