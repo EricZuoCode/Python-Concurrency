@@ -14,6 +14,7 @@ def dance():
 
 
 if __name__ == "__main__":
+    multiprocessing.set_start_method('spawn')  # 设置启动方式为spawn，避免在Windows上出现RuntimeError
     # 创建进程
     sing_process = multiprocessing.Process(target=sing)
     dance_process = multiprocessing.Process(target=dance)
