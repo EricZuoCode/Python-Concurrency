@@ -10,7 +10,7 @@ Python 并发编程学习项目，涵盖进程、线程、协程与锁四大主�
 ├── thread/        # 线程（threading）
 ├── coroutine/     # 协程（asyncio）
 ├── lock/          # 锁与竞争条件
-├── 学习文档.assets/ # 文档插图资源
+├── 异步编程.assets/ # 文档插图资源
 └── 异步编程.md     # 完整学习文档
 ```
 
